@@ -1,10 +1,15 @@
-import { ref, reactive } from "vue";
+import { ref, readonly, onMounted } from "vue";
 import type { Session, LoginFlow, RegistrationFlow } from "@ory/kratos-client";
 import { FrontendApi, Configuration } from "@ory/kratos-client";
 
 interface AuthError {
   message: string;
   details?: Record<string, any>;
+}
+
+interface User {
+  id: string;
+  email: string;
 }
 
 export const useAuth = () => {
@@ -18,23 +23,24 @@ export const useAuth = () => {
     })
   );
 
-  const user = reactive({
-    id: "",
-    email: "",
-  });
+  const user = ref<User | null>(null);
   const isAuthenticated = ref(false);
-  const isLoading = ref(false);
+  const isLoading = ref(true);
   const error = ref<AuthError | null>(null);
   const loginFlow = ref<LoginFlow | null>(null);
   const registrationFlow = ref<RegistrationFlow | null>(null);
 
   const setUser = (session: Session) => {
     if (!session.identity) {
+      user.value = null;
+      isAuthenticated.value = false;
       return;
     }
 
-    user.id = session.identity.id;
-    user.email = session.identity.traits.email;
+    user.value = {
+      id: session.identity.id,
+      email: session.identity.traits.email,
+    };
     isAuthenticated.value = true;
   };
 
@@ -42,16 +48,16 @@ export const useAuth = () => {
     if (err instanceof Error) {
       return { message: err.message };
     }
-    if (typeof err === 'object' && err !== null && 'response' in err) {
+    if (typeof err === "object" && err !== null && "response" in err) {
       const errorResponse = (err as any).response?.data;
-      if (errorResponse && typeof errorResponse === 'object') {
+      if (errorResponse && typeof errorResponse === "object") {
         return {
-          message: errorResponse.error?.message || 'An unknown error occurred',
+          message: errorResponse.error?.message || "An unknown error occurred",
           details: errorResponse.error?.details,
         };
       }
     }
-    return { message: 'An unknown error occurred' };
+    return { message: "An unknown error occurred" };
   };
 
   const checkAuth = async () => {
@@ -63,6 +69,7 @@ export const useAuth = () => {
     } catch (err) {
       error.value = handleError(err);
       isAuthenticated.value = false;
+      user.value = null;
     } finally {
       isLoading.value = false;
     }
@@ -108,8 +115,7 @@ export const useAuth = () => {
     try {
       await ory.createBrowserLogoutFlow();
       isAuthenticated.value = false;
-      user.id = "";
-      user.email = "";
+      user.value = null;
     } catch (err) {
       error.value = handleError(err);
     } finally {
@@ -137,16 +143,19 @@ export const useAuth = () => {
       if (!registrationFlow.value) {
         throw new Error("Registration flow not initialized");
       }
-      const { data: successfullNativeRegistration } = await ory.updateRegistrationFlow({
-        flow: registrationFlow.value.id,
-        updateRegistrationFlowBody: formData,
-      });
+      const { data: successfulNativeRegistration } =
+        await ory.updateRegistrationFlow({
+          flow: registrationFlow.value.id,
+          updateRegistrationFlowBody: formData,
+        });
 
-      if (!successfullNativeRegistration.session) {
-        error.value = { message: "Registration successful but no session created" };
+      if (!successfulNativeRegistration.session) {
+        error.value = {
+          message: "Registration successful but no session created",
+        };
         return false;
       }
-      setUser(successfullNativeRegistration.session);
+      setUser(successfulNativeRegistration.session);
       return true;
     } catch (err) {
       error.value = handleError(err);
@@ -160,13 +169,18 @@ export const useAuth = () => {
     error.value = null;
   };
 
+  // Check auth state on component mount
+  onMounted(() => {
+    checkAuth();
+  });
+
   return {
-    user,
-    isAuthenticated,
-    isLoading,
-    error,
-    loginFlow,
-    registrationFlow,
+    user: readonly(user),
+    isAuthenticated: readonly(isAuthenticated),
+    isLoading: readonly(isLoading),
+    error: readonly(error),
+    loginFlow: readonly(loginFlow),
+    registrationFlow: readonly(registrationFlow),
     checkAuth,
     initializeLoginFlow,
     login,
